@@ -163,6 +163,7 @@ class ActionRecognition(tasks.Task, ABC):
 
         loss_att_source = self.attentive_entropy(dic_logits['pred_video_source'],dic_logits['domain_source'][2])   #per l'attentive entropy we need both the class_pred and domain_pred at video-level
         loss_att_target = self.attentive_entropy(dic_logits['pred_video_target'], dic_logits['domain_target'][2])
+        loss_att = self.attentive_entropy(torch.cat((dic_logits['pred_video_source'],dic_logits['pred_video_target']),0),torch.cat((dic_logits['domain_source'][2],dic_logits['domain_target'][2]),0))
 
 
 
@@ -178,7 +179,7 @@ class ActionRecognition(tasks.Task, ABC):
             loss += (loss_GVD_source + loss_GVD_target)
 
         if 'ATT' in self.model_args['RGB']['domain_adapt_strategy']: 
-            loss += (loss_att_source + loss_att_target)
+            loss += (loss_att*0.3)
     
 
         # Update the loss value, weighting it by the ratio of the batch size to the total
