@@ -83,7 +83,6 @@ class Classifier(nn.Module):
 
     def domain_classifier_relation(self, feat_relation, beta): #copiato da UDA TA3N
         # 32x4x512 --> (32x4)x2
-        print('dimensioni feat_relation',feat_relation.shape)
         pred_fc_domain_relation_video = None
         for i in range(len(self.relation_domain_classifier_all)):
             feat_relation_single = feat_relation[:, i, :].squeeze(1)  # 32x1x512 -> 32x512
