@@ -220,12 +220,12 @@ class Classifier(nn.Module):
         print(y_ti.size())
         print(pred_fc_source.size())
         print(pred_fc_class_source.size())
-        raise KeyboardInterrupt("PROVA")
-        gamma = y_ti + pred_fc_source + pred_fc_class_source
+        pred_fc_source2 = pred_fc_source.view(batch_source,-1,8)
+        pred_fc_source2  = torch.mean(pred_fc_source2,1)
+        gamma = y_ti + pred_fc_source2 + pred_fc_class_source
         gamma = torch.sum(gamma,0) # 8
         gamma = gamma / (batch_target * self.num_clips)
         print(gamma)
-        raise KeyboardInterrupt("PROVA3")
         # domain adaptation - relational level
         if self.avg_modality == 'TRN':
             num_relation = self.num_clips - 1
