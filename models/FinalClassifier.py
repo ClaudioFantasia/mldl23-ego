@@ -210,7 +210,22 @@ class Classifier(nn.Module):
         weight = torch.tanh(1 + src_entropy) # size (32,4)
         # 32,4,512 x 32,4
         feat_fc_video_relation_source = feat_fc_video_relation_source * weight.unsqueeze(-1)
+        feat_fc_video_source2 = torch.sum(feat_fc_video_relation_source,1)
         
+        y_ti = self.fc_classifier_video(feat_fc_video_source2) #32,512 -> 32,8
+        #pred_fc_source che sarebbe y_spi [32,8]
+        #pred_fc_class_relation_source con size [32,4,8]
+        pred_fc_class_relation_source = pred_fc_class_relation_source * weight.unsqueeze(-1) # 32,4,8
+        pred_fc_class_source = torch.sum(pred_fc_class_relation_source,1) #32,8
+        print(y_ti.size())
+        print(pred_fc_source.size())
+        print(pred_fc_class_source.size())
+        raise KeyboardInterrupt("PROVA")
+        gamma = y_ti + pred_fc_source + pred_fc_class_source
+        gamma = torch.sum(gamma,0) # 8
+        gamma = gamma / (batch_target * self.num_clips)
+        print(gamma)
+        raise KeyboardInterrupt("PROVA3")
         # domain adaptation - relational level
         if self.avg_modality == 'TRN':
             num_relation = self.num_clips - 1
