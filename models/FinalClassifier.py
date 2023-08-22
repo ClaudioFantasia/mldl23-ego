@@ -97,16 +97,13 @@ class Classifier(nn.Module):
         pred_fc_domain_relation_video = None
         for i in range(len(self.relation_domain_classifier_all)):
             feat_relation_single = feat_relation[:, i, :].squeeze(1)  # 32x1x512 -> 32x512
-            feat_fc_domain_relation_single = GradReverse.apply(feat_relation_single,
-                                                               beta)  # the same beta for all relations (for now)
+            feat_fc_domain_relation_single = GradReverse.apply(feat_relation_single,beta)  # the same beta for all relations (for now)
             pred_fc_domain_relation_single = self.relation_domain_classifier_all[i](feat_fc_domain_relation_single)
 
             if pred_fc_domain_relation_video is None:
                 pred_fc_domain_relation_video = pred_fc_domain_relation_single.view(-1, 1, 2)
             else:
-                pred_fc_domain_relation_video = torch.cat(
-                    (pred_fc_domain_relation_video, pred_fc_domain_relation_single.view(-1, 1, 2)), 1)
-
+                pred_fc_domain_relation_video = torch.cat((pred_fc_domain_relation_video, pred_fc_domain_relation_single.view(-1, 1, 2)), 1)
         pred_fc_domain_relation_video = pred_fc_domain_relation_video.view(-1, 2)
 
         return pred_fc_domain_relation_video  # output size : [128,2]
@@ -123,12 +120,12 @@ class Classifier(nn.Module):
             if pred_fc_class_relation_video is None:
                 pred_fc_class_relation_video = pred_fc_class_relation_single.view(-1, 1, 8)
             else:
-                pred_fc_class_relation_video = torch.cat(
-                    (pred_fc_class_relation_video, pred_fc_class_relation_single.view(-1, 1, 8)), 1)
+                pred_fc_class_relation_video = torch.cat((pred_fc_class_relation_video, pred_fc_class_relation_single.view(-1, 1, 8)), 1)
 
         pred_fc_class_relation_video = pred_fc_class_relation_video.view(-1, 8)
 
         return pred_fc_class_relation_video  # output size : [128,8]
+
     def temporal_aggregation(self, x):
 
         x = x.view(-1, self.num_clips, 512)  # restore the original shape of the tensor, cioè 32x5x512
@@ -189,48 +186,55 @@ class Classifier(nn.Module):
         # adversarial learning - clip level
         pred_fc_domain_frame_source = self.domain_classifier_frame(feat_fc_source, beta)  # 160 x 512 --> 160 x 2
         pred_fc_domain_frame_target = self.domain_classifier_frame(feat_fc_target, beta)  # 160 x 512 --> 160 x 2
-        pred_domain_all_source.append(pred_fc_domain_frame_source.view((batch_source, num_segments) + pred_fc_domain_frame_source.size()[-1:]))
+        pred_domain_all_source.append(pred_fc_domain_frame_source.view((batch_source, num_segments) + pred_fc_domain_frame_source.size()[-1:])) # appende un 32 x 5 x 2
         pred_domain_all_target.append(pred_fc_domain_frame_target.view((batch_target, num_segments) + pred_fc_domain_frame_target.size()[-1:]))
 
         # prediction - clip level
         pred_fc_source = self.fc_classifier_frame(feat_fc_source)  # 160 x 512 --> 160 x num_classes
         pred_fc_target = self.fc_classifier_frame(feat_fc_target)  # 160 x 512 --> 160 x num_classes
 
+        # ---- #
+
         # aggregate the clip-based features to relation-based features ###
         feat_fc_video_relation_source = self.temporal_aggregation(feat_fc_source)  # 160 x 512 -> 32 x 1 x 512 (Pooling) / 32 x 4 x 512 (TRN)
         feat_fc_video_relation_target = self.temporal_aggregation(feat_fc_target)
 
-        #feat_fc_video_relation_source (e target) è il nostro tensore livello relazionale
-        self.softmax = nn.Softmax(dim=2)
-        self.logsoftmax = nn.LogSoftmax(dim=2)
-        pred_fc_class_relation_source = self.class_classifier_relation(feat_fc_video_relation_source) # size [128,8]
-        pred_fc_class_relation_target = self.class_classifier_relation(feat_fc_video_relation_target)
-        pred_fc_class_relation_source = pred_fc_class_relation_source.view(32,-1,8) # size [32,4,8]
-        src_entropy = torch.sum(-self.softmax(pred_fc_class_relation_source) * self.logsoftmax(pred_fc_class_relation_source), 2) # size [32,4]
-        weight = torch.tanh(1 + src_entropy) # size (32,4)
-        # 32,4,512 x 32,4
-        feat_fc_video_relation_source = feat_fc_video_relation_source * weight.unsqueeze(-1)
-        feat_fc_video_source2 = torch.sum(feat_fc_video_relation_source,1)
-        
-        y_ti = self.fc_classifier_video(feat_fc_video_source2) #32,512 -> 32,8
-        #pred_fc_source che sarebbe y_spi [32,8]
-        #pred_fc_class_relation_source con size [32,4,8]
-        pred_fc_class_relation_source = pred_fc_class_relation_source * weight.unsqueeze(-1) # 32,4,8
-        pred_fc_class_source = torch.sum(pred_fc_class_relation_source,1) #32,8
-        print(y_ti.size())
-        print(pred_fc_source.size())
-        print(pred_fc_class_source.size())
-        pred_fc_source2 = pred_fc_source.view(batch_source,-1,8)
-        pred_fc_source2  = torch.mean(pred_fc_source2,1)
-        gamma = y_ti + pred_fc_source2 + pred_fc_class_source
-        gamma = torch.sum(gamma,0) # 8
-        gamma = gamma / (batch_target * self.num_clips)
-        print(gamma)
+        # feat_fc_video_relation_source (e target) è il nostro tensore livello relazionale
+        if 'PATAN' in self.domain_adapt_strategy:
+            self.softmax = nn.Softmax(dim=2)
+            self.logsoftmax = nn.LogSoftmax(dim=2)
+            pred_fc_class_relation_target = self.class_classifier_relation(feat_fc_video_relation_target) #size 128,8
+            pred_fc_class_relation_target = pred_fc_class_relation_target.view(-1, 4, 8)  # size [32,4,8]
+            src_entropy = torch.sum(-self.softmax(pred_fc_class_relation_target) * self.logsoftmax(pred_fc_class_relation_target),2)  # size [32,4]
+            weight = torch.tanh(1 + src_entropy)  # size (32,4)
+
+            # 32,4,512 x 32,4; equazione 7
+            feat_fc_video_relation_source2 = feat_fc_video_relation_source * weight.unsqueeze(-1) # output size -> 32 x 4 x 512
+            feat_fc_video_relation_target2 = feat_fc_video_relation_target * weight.unsqueeze(-1) # output size -> 32 x 4 x 512
+
+            #livello video; equazione 8
+
+            feat_fc_video_source2 = torch.sum(feat_fc_video_relation_source2,1) #32 x 512
+            feat_fc_video_target2 = torch.sum(feat_fc_video_relation_target2, 1) # 32 x 512
+
+            y_ti = self.fc_classifier_video(feat_fc_video_target2)  # 32,512 -> 32,8
+            # pred_fc_source che sarebbe y_spi però lungo le 5 clip, quindi [160,8]
+            # pred_fc_class_relation_source con size [32,4,8]
+            pred_fc_class_relation_target = pred_fc_class_relation_target * weight.unsqueeze(-1)  # 32,4,8
+            pred_fc_class_target= torch.sum(pred_fc_class_relation_target, 1)  # 32,8
+
+            pred_fc_target2 = pred_fc_target.view(-1, 5, 8)
+            pred_fc_target2 = torch.mean(pred_fc_target2, 1)
+            gamma = y_ti + pred_fc_target2 + pred_fc_class_target # questa somma sarà 32 x 8
+            gamma = torch.sum(gamma, 0)  # 8
+            gamma = gamma / (batch_target * self.num_clips)
+
+
         # domain adaptation - relational level
         if self.avg_modality == 'TRN':
             num_relation = self.num_clips - 1
-            pred_fc_domain_video_relation_source = self.domain_classifier_relation(feat_fc_video_relation_source,beta)  # output size : [128,2]
-            pred_fc_domain_video_relation_target = self.domain_classifier_relation(feat_fc_video_relation_target,beta)  # output size : [128,2]
+            pred_fc_domain_video_relation_source = self.domain_classifier_relation(feat_fc_video_relation_source2,beta)  # output size : [128,2]
+            pred_fc_domain_video_relation_target = self.domain_classifier_relation(feat_fc_video_relation_target2,beta)  # output size : [128,2]
             pred_domain_all_source.append(pred_fc_domain_video_relation_source.view((batch_source, num_relation) + pred_fc_domain_video_relation_source.size()[-1:]))
             pred_domain_all_target.append(pred_fc_domain_video_relation_target.view((batch_target, num_relation) + pred_fc_domain_video_relation_target.size()[-1:]))
             # print(pred_domain_all_source[1].size()) # dovrebbe essere [32,4,2]
@@ -238,39 +242,34 @@ class Classifier(nn.Module):
         # per l'attention we need both the relations_feat and domain_pred_rel
         if self.avg_modality == 'TRN':
             if 'ATT' in self.domain_adapt_strategy:
-                feat_fc_video_relation_source, attn_relation_source = self.get_attn_feat_relation(
-                    feat_fc_video_relation_source, pred_fc_domain_video_relation_source, num_relation)
-                feat_fc_video_relation_target, attn_relation_target = self.get_attn_feat_relation(
-                    feat_fc_video_relation_target, pred_fc_domain_video_relation_target, num_relation)
+                feat_fc_video_relation_source, attn_relation_source = self.get_attn_feat_relation(feat_fc_video_relation_source, pred_fc_domain_video_relation_source, num_relation)
+                feat_fc_video_relation_target, attn_relation_target = self.get_attn_feat_relation(feat_fc_video_relation_target, pred_fc_domain_video_relation_target, num_relation)
             else:
-                attn_relation_source = feat_fc_video_relation_source[:, :,
-                                       0]  # assign random tensors to attention values to avoid runtime error
-                attn_relation_target = feat_fc_video_relation_source[:, :,
-                                       0]  # assign random tensors to attention values to avoid runtime error
+                attn_relation_source = feat_fc_video_relation_source[:, :,0]  # assign random tensors to attention values to avoid runtime error
+                attn_relation_target = feat_fc_video_relation_source[:, :,0]  # assign random tensors to attention values to avoid runtime error
         else:  # no attention mechanism
-            attn_relation_source = feat_fc_video_relation_source[:, :,
-                                   0]  # assign random tensors to attention values to avoid runtime error
-            attn_relation_target = feat_fc_video_relation_source[:, :,
-                                   0]  # assign random tensors to attention values to avoid runtime error
+            attn_relation_source = feat_fc_video_relation_source[:, :,0]  # assign random tensors to attention values to avoid runtime error
+            attn_relation_target = feat_fc_video_relation_source[:, :,0]  # assign random tensors to attention values to avoid runtime error
 
+        # IO PER ORA COMMENTEREI
         # qui aggreghiamo le features sia che sia pooling o TRN
-        feat_fc_video_source = feat_fc_video_relation_source.sum(1)  # 32 x 1 x 512 (Pooling) 32 x 4 x 512 (TRN) --> 32 x 512
-        feat_fc_video_target = feat_fc_video_relation_target.sum(1)  # 32 x 1 x 512 (Pooling) 32 x 4 x 512 (TRN) --> 32 x 512
+        #feat_fc_video_source = feat_fc_video_relation_source.sum(1)  # 32 x 1 x 512 (Pooling) 32 x 4 x 512 (TRN) --> 32 x 512
+        #feat_fc_video_target = feat_fc_video_relation_target.sum(1)  # 32 x 1 x 512 (Pooling) 32 x 4 x 512 (TRN) --> 32 x 512
 
         # domain adaptation - video level
-        pred_fc_domain_video_source = self.domain_classifier_video(feat_fc_video_source, beta)
-        pred_fc_domain_video_target = self.domain_classifier_video(feat_fc_video_target, beta)
+        pred_fc_domain_video_source = self.domain_classifier_video(feat_fc_video_source2, beta)
+        pred_fc_domain_video_target = self.domain_classifier_video(feat_fc_video_target2, beta)
         pred_domain_all_source.append(pred_fc_domain_video_source.view((batch_source,) + pred_fc_domain_video_source.size()[-1:]))
         pred_domain_all_target.append(pred_fc_domain_video_target.view((batch_target,) + pred_fc_domain_video_target.size()[-1:]))
 
         if self.avg_modality == 'Pooling':  # aggiungiamo un altro append, così da far si che [1] sia un valore dummy
-            pred_domain_all_source.append(
-                pred_fc_domain_video_source.view((batch_source,) + pred_fc_domain_video_source.size()[-1:]))
-            pred_domain_all_target.append(
-                pred_fc_domain_video_target.view((batch_target,) + pred_fc_domain_video_target.size()[-1:]))
+            pred_domain_all_source.append(pred_fc_domain_video_source.view((batch_source,) + pred_fc_domain_video_source.size()[-1:]))
+            pred_domain_all_target.append(pred_fc_domain_video_target.view((batch_target,) + pred_fc_domain_video_target.size()[-1:]))
 
-        pred_fc_video_source = self.fc_classifier_video(feat_fc_video_source)
-        pred_fc_video_target = self.fc_classifier_video(feat_fc_video_target)
+        pred_fc_video_source = self.fc_classifier_video(feat_fc_video_source2)
+        pred_fc_video_target = self.fc_classifier_video(feat_fc_video_target2)
+
+
 
         results = {
             'domain_source': pred_domain_all_source,
@@ -281,6 +280,7 @@ class Classifier(nn.Module):
             'pred_video_source': pred_fc_video_source,
             'att_rel_source': attn_relation_source,
             'att_rel_target': attn_relation_target,
+            'gamma': gamma,
         }
 
         return results, {}
