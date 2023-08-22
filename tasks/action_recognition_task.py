@@ -40,8 +40,8 @@ class ActionRecognition(tasks.Task, ABC):
         super().__init__(name, task_models, batch_size, total_batch, models_dir, args, **kwargs)
         self.model_args = model_args
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") #dichiariamo che vogliamo lavorare con la GPU
-
+        self.device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")  # dichiariamo che vogliamo lavorare con la GPU
 
         # self.accuracy and self.loss track the evolution of the accuracy and the training loss
         self.accuracy = utils.Accuracy(topk=(1, 5), classes=num_classes)
@@ -62,7 +62,7 @@ class ActionRecognition(tasks.Task, ABC):
                                                 weight_decay=model_args[m].weight_decay,
                                                 momentum=model_args[m].sgd_momentum)
 
-    def attentive_entropy(self,pred, pred_domain):
+    def attentive_entropy(self, pred, pred_domain):
         softmax = nn.Softmax(dim=1)
         logsoftmax = nn.LogSoftmax(dim=1)
 
@@ -74,9 +74,8 @@ class ActionRecognition(tasks.Task, ABC):
         loss = torch.mean(weights * torch.sum(-softmax(pred) * logsoftmax(pred), 1))
         return loss
 
-
     def forward(self, data_source: Dict[str, torch.Tensor], data_target: Dict[str, torch.Tensor], **kwargs) -> Tuple[
-        Dict[Any, Any], Dict[Any, Dict[Any, Any]]]: #onestamente questa roba non ha senso
+        Dict[Any, Any], Dict[Any, Dict[Any, Any]]]:  # onestamente questa roba non ha senso
         """Forward step of the task
 
         Parameters
@@ -92,26 +91,24 @@ class ActionRecognition(tasks.Task, ABC):
         logits = {}
         features = {}
         for i_m, m in enumerate(self.modalities):
-            #logits[m], feat = self.task_models[m](x=data[m], **kwargs)
+            # logits[m], feat = self.task_models[m](x=data[m], **kwargs)
             logits[m], feat = self.task_models[m](input_source=data_source[m], input_target=data_target[m], **kwargs)
             if i_m == 0:
                 for k in feat.keys():
                     features[k] = {}
             for k in feat.keys():
                 features[k][m] = feat[k]
-        return logits, features #qua features è vuoto, mentre logits ha i nostri
+        return logits, features  # qua features è vuoto, mentre logits ha i nostri
         # notare che logits è un dizionario con le modalità, ma noi abbiamo solo RGB
 
-
-        #results = {
+        # results = {
         #    'domain_source':pred_domain_all_source ,
         #    'domain_target': pred_domain_all_target,
         #    'pred_frame_source': pred_fc_source,
         #    'pred_frame_target': pred_fc_target,
         #    'pred_video_target': pred_fc_video_target,
         #    'pred_video_source': pred_fc_video_source,
-        #}
-
+        # }
 
     def compute_loss(self, logits: Dict[str, torch.Tensor], label: torch.Tensor, loss_weight: float = 1.0):
         """Fuse the logits from different modalities and compute the classification loss.
@@ -126,67 +123,95 @@ class ActionRecognition(tasks.Task, ABC):
             weight of the classification loss, by default 1.0
         """
 
-
         dic_logits = logits["RGB"]
+
+        self.criterionNored = torch.nn.CrossEntropyLoss(weight=None, size_average=None, ignore_index=-100,
+                                                        reduce=None, reduction='none')
+        gamma = dic_logits['gamma']
         # perchè divide per num_clips?
-        #loss = self.criterion(fused_logits, label) / self.num_clips
+        # loss = self.criterion(fused_logits, label) / self.num_clips
 
         # qua non dovremmo dividere la loss_frame per 5?
-        loss_frame_source = self.criterion(dic_logits['pred_frame_source'], label.repeat(5)) #serve ad espandere il tensore delle label e matchare la size batch x n_clip = 5
-        loss_frame_source = 0.2 * loss_frame_source #divido per 5 perchè ho calcolato la loss su 5 clip e noi dobbiamo farne una media
-        loss_video_source = self.criterion(dic_logits['pred_video_source'], label)
+        loss_frame_source = self.criterionNored(dic_logits['pred_frame_source'], label.repeat(
+            5))  # serve ad espandere il tensore delle label e matchare la size batch x n_clip = 5
+        loss_frame_source = 0.2 * loss_frame_source  # divido per 5 perchè ho calcolato la loss su 5 clip e noi dobbiamo farne una media
+
+        loss_frame_source = loss_frame_source * gamma[label].repeat(5)
+        loss_frame_source = torch.mean(loss_frame_source)
+
+        loss_video_source = self.criterionNored(dic_logits['pred_video_source'], label)
+        loss_video_source = loss_video_source * gamma[label]
+        loss_video_source = torch.mean(loss_video_source)
+
 
         if 'GSD' in self.model_args['RGB']['domain_adapt_strategy']:
-            #sembra che questi due passaggi siano fondamentali per il formato da passare alla self.criterion. Perchè fa passare da float a long o viceversa
+            # sembra che questi due passaggi siano fondamentali per il formato da passare alla self.criterion. Perchè fa passare da float a long o viceversa
             dic_logits['domain_source'][0] = dic_logits['domain_source'][0].reshape(-1, 2)
             dic_logits['domain_target'][0] = dic_logits['domain_target'][0].reshape(-1, 2)
-            loss_GSD_source = self.criterion(dic_logits['domain_source'][0], torch.cat((torch.ones((len(dic_logits['domain_source'][0]), 1)), torch.zeros((len(dic_logits['domain_source'][0]), 1))),dim=1).to(self.device))
-            loss_GSD_target = self.criterion(dic_logits['domain_target'][0], torch.cat((torch.zeros(len(dic_logits['domain_target'][0]), 1), torch.ones(len(dic_logits['domain_target'][0]), 1)),dim=1).to(self.device))
+            loss_GSD_source = self.criterionNored(dic_logits['domain_source'][0], torch.cat((torch.ones(
+                (len(dic_logits['domain_source'][0]), 1)), torch.zeros((len(dic_logits['domain_source'][0]), 1))),
+                                                                                            dim=1).to(self.device))
+            loss_GSD_source = loss_GSD_source * gamma[label].repeat(5)
+            loss_GSD_source = torch.mean(loss_GSD_source)
+            loss_GSD_target = self.criterion(dic_logits['domain_target'][0], torch.cat((torch.zeros(
+                len(dic_logits['domain_target'][0]), 1), torch.ones(len(dic_logits['domain_target'][0]), 1)), dim=1).to(
+                self.device))
 
-        #dic_logits['domain_source'][1] = dic_logits['domain_source'][1].reshape(-1,2)
-        #dic_logits['domain_target'][1] = dic_logits['domain_target'][1].reshape(-1, 2)
+        # dic_logits['domain_source'][1] = dic_logits['domain_source'][1].reshape(-1,2)
+        # dic_logits['domain_target'][1] = dic_logits['domain_target'][1].reshape(-1, 2)
 
-        if (self.model_args['RGB']['avg_modality'] == 'TRN' and 'GRD' in self.model_args['RGB']['domain_adapt_strategy']):
-            domain_source_relation=dic_logits['domain_source'][1].reshape(-1,2)
-            loss_GRD_source = self.criterion(domain_source_relation, torch.cat((torch.ones((len(domain_source_relation),1)), torch.zeros((len(domain_source_relation),1))),dim=1).to(self.device))
-        #elif self.model_args['RGB']['avg_modality'] == 'Pooling':
+        if (self.model_args['RGB']['avg_modality'] == 'TRN' and 'GRD' in self.model_args['RGB'][
+            'domain_adapt_strategy']):
+            domain_source_relation = dic_logits['domain_source'][1].reshape(-1, 2)
+            loss_GRD_source = self.criterion(domain_source_relation, torch.cat(
+                (torch.ones((len(domain_source_relation), 1)), torch.zeros((len(domain_source_relation), 1))),
+                dim=1).to(self.device))
+        # elif self.model_args['RGB']['avg_modality'] == 'Pooling':
         #    loss_GRD_source = self.criterion(dic_logits['domain_source'][1], torch.cat((torch.ones((len(dic_logits['domain_source'][1]),1)), torch.zeros((len(dic_logits['domain_source'][1]),1))),dim=1).to(self.device))
         # per ora commento la GRD loss se facciamo AvgPooling
 
-
-        if (self.model_args['RGB']['avg_modality'] == 'TRN' and 'GRD' in self.model_args['RGB']['domain_adapt_strategy']):
-            domain_target_relation=dic_logits['domain_target'][1].reshape(-1,2)
-            loss_GRD_target = self.criterion(domain_target_relation, torch.cat((torch.ones((len(domain_target_relation),1)), torch.zeros((len(domain_target_relation),1))),dim=1).to(self.device))
-        #elif self.model_args['RGB']['avg_modality'] == 'Pooling':
+        if (self.model_args['RGB']['avg_modality'] == 'TRN' and 'GRD' in self.model_args['RGB'][
+            'domain_adapt_strategy']):
+            domain_target_relation = dic_logits['domain_target'][1].reshape(-1, 2)
+            loss_GRD_target = self.criterion(domain_target_relation, torch.cat(
+                (torch.ones((len(domain_target_relation), 1)), torch.zeros((len(domain_target_relation), 1))),
+                dim=1).to(self.device))
+        # elif self.model_args['RGB']['avg_modality'] == 'Pooling':
         #    loss_GRD_target = self.criterion(dic_logits['domain_target'][1], torch.cat((torch.ones((len(dic_logits['domain_target'][1]),1)), torch.zeros((len(dic_logits['domain_target'][1]),1))),dim=1).to(self.device))
 
         if 'GVD' in self.model_args['RGB']['domain_adapt_strategy']:
-            loss_GVD_source = self.criterion(dic_logits['domain_source'][2], torch.cat((torch.ones((len(dic_logits['domain_source'][2]), 1)), torch.zeros((len(dic_logits['domain_source'][2]), 1))),dim=1).to(self.device))
-            loss_GVD_target = self.criterion(dic_logits['domain_target'][2], torch.cat((torch.zeros(len(dic_logits['domain_target'][2]), 1), torch.ones(len(dic_logits['domain_target'][2]), 1)),dim=1).to(self.device))
+            loss_GVD_source = self.criterionNored(dic_logits['domain_source'][2], torch.cat((torch.ones(
+                (len(dic_logits['domain_source'][2]), 1)), torch.zeros((len(dic_logits['domain_source'][2]), 1))),
+                                                                                            dim=1).to(self.device))
+            loss_GVD_source = loss_GVD_source * gamma[label]
+            loss_GVD_source = torch.mean(loss_GVD_source)
+            loss_GVD_target = self.criterion(dic_logits['domain_target'][2], torch.cat((torch.zeros(
+                len(dic_logits['domain_target'][2]), 1), torch.ones(len(dic_logits['domain_target'][2]), 1)), dim=1).to(
+                self.device))
 
-        
-        if 'ATT' in self.model_args['RGB']['domain_adapt_strategy']: 
-            loss_att = self.attentive_entropy(torch.cat((dic_logits['pred_video_source'],dic_logits['pred_video_target']),0),torch.cat((dic_logits['domain_source'][2],dic_logits['domain_target'][2]),0))
-
+        if 'ATT' in self.model_args['RGB']['domain_adapt_strategy']:
+            loss_att = self.attentive_entropy(
+                torch.cat((dic_logits['pred_video_source'], dic_logits['pred_video_target']), 0),
+                torch.cat((dic_logits['domain_source'][2], dic_logits['domain_target'][2]), 0))
 
         loss = loss_frame_source + loss_video_source
 
         if 'GSD' in self.model_args['RGB']['domain_adapt_strategy']:
             loss += (loss_GSD_source + loss_GSD_target)
 
-        if ('GRD' in self.model_args['RGB']['domain_adapt_strategy'] and self.model_args['RGB']['avg_modality'] == 'TRN'):
+        if ('GRD' in self.model_args['RGB']['domain_adapt_strategy'] and self.model_args['RGB'][
+            'avg_modality'] == 'TRN'):
             loss += (loss_GRD_source + loss_GRD_target)
 
         if 'GVD' in self.model_args['RGB']['domain_adapt_strategy']:
             loss += (loss_GVD_source + loss_GVD_target)
 
-        if 'ATT' in self.model_args['RGB']['domain_adapt_strategy']: 
-            loss += (loss_att*0.3)    
+        if 'ATT' in self.model_args['RGB']['domain_adapt_strategy']:
+            loss += (loss_att * 0.3)
 
-        # Update the loss value, weighting it by the ratio of the batch size to the total
+            # Update the loss value, weighting it by the ratio of the batch size to the total
         # batch size (for gradient accumulation)
         self.loss.update(torch.mean(loss_weight * loss) / (self.total_batch / self.batch_size), self.batch_size)
-
 
     def compute_accuracy(self, logits: Dict[str, torch.Tensor], label: torch.Tensor):
         """Fuse the logits from different modalities and compute the classification accuracy.
