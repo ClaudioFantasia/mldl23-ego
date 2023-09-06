@@ -172,17 +172,32 @@ class ActionRecognition(tasks.Task, ABC):
 
         loss = loss_frame_source + loss_video_source
 
+        if all([x in self.model_args['RGB']['domain_adapt_strategy'] for x in ['GSD','GRD','GVD','ATT']]):
+            multipliers = [1.0,0.5,0.9,0.3]
+        else:
+            multipliers = [1,1,1,1]
+
         if 'GSD' in self.model_args['RGB']['domain_adapt_strategy']:
-            loss += (loss_GSD_source + loss_GSD_target)
+            loss += multipliers[0]*(loss_GSD_source + loss_GSD_target)
 
         if ('GRD' in self.model_args['RGB']['domain_adapt_strategy'] and self.model_args['RGB']['avg_modality'] == 'TRN'):
-            loss += (loss_GRD_source + loss_GRD_target)
+            loss += multipliers[1]*(loss_GRD_source + loss_GRD_target)
 
         if 'GVD' in self.model_args['RGB']['domain_adapt_strategy']:
-            loss += (loss_GVD_source + loss_GVD_target)
+            loss += multipliers[2]*(loss_GVD_source + loss_GVD_target)
 
         if 'ATT' in self.model_args['RGB']['domain_adapt_strategy']: 
-            loss += (loss_att*0.3)    
+            loss += multipliers[3]*(loss_att)    
+
+        if 'MCC' in self.model_args['RGB']['domain_adapt_strategy']: 
+             probs_target = dic_logits['pred_video_target'].softmax(dim=1)
+             target_entropy_weight = -torch.sum(probs_target * torch.log(probs_target), dim=1)
+             target_entropy_weight = 1 + torch.exp(-target_entropy_weight)
+             target_entropy_weight = probs_target.size(0) * target_entropy_weight / torch.sum(target_entropy_weight)
+             cov_matrix_t = probs_target.mul(target_entropy_weight.view(-1,1)).transpose(1,0).mm(probs_target)
+             cov_matrix_t = cov_matrix_t / torch.sum(cov_matrix_t, dim=1)
+             mcc_loss = (torch.sum(cov_matrix_t) - torch.trace(cov_matrix_t)) / (64) 
+             loss += multipliers[3]*(mcc_loss) 
 
         # Update the loss value, weighting it by the ratio of the batch size to the total
         # batch size (for gradient accumulation)
