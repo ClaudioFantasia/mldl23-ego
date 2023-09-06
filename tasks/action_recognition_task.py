@@ -129,12 +129,12 @@ class ActionRecognition(tasks.Task, ABC):
 
 
         dic_logits = logits["RGB"]
-        # perchè divide per num_clips?
+        
         #loss = self.criterion(fused_logits, label) / self.num_clips
 
-        # qua non dovremmo dividere la loss_frame per 5?
+        
         loss_frame_source = self.criterion(dic_logits['pred_frame_source'], label.repeat(5)) #serve ad espandere il tensore delle label e matchare la size batch x n_clip = 5
-        loss_frame_source = 0.2 * loss_frame_source #divido per 5 perchè ho calcolato la loss su 5 clip e noi dobbiamo farne una media
+        #loss_frame_source = 0.2 * loss_frame_source 
         loss_video_source = self.criterion(dic_logits['pred_video_source'], label)
 
         if 'GSD' in self.model_args['RGB']['domain_adapt_strategy']:
@@ -173,7 +173,7 @@ class ActionRecognition(tasks.Task, ABC):
         loss = loss_frame_source + loss_video_source
 
         if all([x in self.model_args['RGB']['domain_adapt_strategy'] for x in ['GSD','GRD','GVD','ATT']]):
-            multipliers = [1.0,0.5,0.9,0.3]
+            multipliers = [0.9,0.5,1,0.3]
         else:
             multipliers = [1,1,1,1]
 
