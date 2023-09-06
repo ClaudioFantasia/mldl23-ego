@@ -182,7 +182,17 @@ class ActionRecognition(tasks.Task, ABC):
             loss += (loss_GVD_source + loss_GVD_target)
 
         if 'ATT' in self.model_args['RGB']['domain_adapt_strategy']: 
-            loss += (loss_att*0.3)    
+            loss += (loss_att*0.3)  
+
+        if 'MCC' in self.model_args['RGB']['domain_adapt_strategy']: 
+             probs_target = dic_logits['pred_video_target'].softmax(dim=1)
+             target_entropy_weight = -torch.sum(probs_target * torch.log(probs_target), dim=1)
+             target_entropy_weight = 1 + torch.exp(-target_entropy_weight)
+             target_entropy_weight = probs_target.size(0) * target_entropy_weight / torch.sum(target_entropy_weight)
+             cov_matrix_t = probs_target.mul(target_entropy_weight.view(-1,1)).transpose(1,0).mm(probs_target)
+             cov_matrix_t = cov_matrix_t / torch.sum(cov_matrix_t, dim=1)
+             mcc_loss = (torch.sum(cov_matrix_t) - torch.trace(cov_matrix_t)) / (64) 
+             loss += (mcc_loss)
 
         # Update the loss value, weighting it by the ratio of the batch size to the total
         # batch size (for gradient accumulation)
